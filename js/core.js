@@ -229,12 +229,15 @@
           p.z = -ahead * 170;
           p.opacity = clamp(1 - Math.max(0, ahead - 1) * 0.55, 0, 1);
         } else if (q > 0) {
-          /* 正在翻的这一张：抬起来、绕过书脊，两端用 sin 平滑接上 */
+          /* 正在翻的这一张：抬起来、绕过书脊，两端用 sin 平滑接上。
+             真正的形状（弯曲、卷边、投影）交给 js/sheet.js 的物理链在引擎里画；
+             这里给出铰链位置和尺寸，并保留一份刚体姿态当 2D 兜底 / 形变时用。 */
           var sw = Math.sin((1 - q) * Math.PI);
           p.x = shift - halfW + q * step;
           p.ry = -tilt + 2 * tilt * (1 - q) + 62 * DEG * sw * (1 - flat);
           p.z = 120 * sw * (1 - 0.6 * flat);
           p.opacity = 1;
+          p.turn = { q: q, hx: shift + gapx, hy: 0, hz: 0, w: pw, h: page.h * fit };
         } else if (q > -1) {
           /* 刚翻过去的那一张：原地压在左页位上，等下一张落下来才让位 */
           p.x = shift - halfW;
@@ -393,6 +396,24 @@
     if (a.layout === b.layout) {
       /* 同一个布局：直接在连续 focus 上采样，位移/翻页都是真连续 */
       poses = layoutPoses(a.layout, base);
+
+      /* 书本的翻页这一张交给物理链：按自己的进度 u 查预积分的角度剖面。
+         key 用「两个关键帧 + 页号」，同一段过渡里恒定 → 结果决定性、可重复渲染。 */
+      if (a.layout === 'book' && PF.Sheet) {
+        for (var si = 0; si < poses.length; si++) {
+          var tp = poses[si].turn;
+          if (!tp) continue;
+          var u = clamp(1 - tp.q, 0, 1);
+          var ang = PF.Sheet.anglesFor(a.id + '>' + b.id + '#' + si, u);
+          poses[si].sheet = {
+            hx: tp.hx, hy: tp.hy, hz: tp.hz, w: tp.w, h: tp.h,
+            angles: ang,
+            lift: Math.abs(Math.sin(Math.PI * u))
+          };
+          /* 排序用的 z：翻到侧面时鼓向观者（和纸面最高点一致） */
+          poses[si].z = 120 * Math.sin(Math.PI * u);
+        }
+      }
     } else {
       /* 换布局：两端各采样一次再形变混合，端点值保持精确。
          中段把「书页朝观者翘起/翻页摆动」这类布局自带的姿态收敛掉（flat 两端为 0，

@@ -25,9 +25,12 @@
     '#version 300 es',
     'in vec4 aPos;',      // (X*w, Y*w, zNdc*w, w) —— 除法交给光栅化器
     'in vec2 aUV;',
+    'in float aShade;',   // 逐顶点明暗：弯曲纸面的法线是连续的，明暗也必须连续
     'out vec2 vUV;',
+    'out float vShade;',
     'void main() {',
     '  vUV = aUV;',
+    '  vShade = aShade;',
     '  gl_Position = aPos;',
     '}'
   ].join('\n');
@@ -36,11 +39,14 @@
     '#version 300 es',
     'precision mediump float;',
     'in vec2 vUV;',
+    'in float vShade;',
     'uniform sampler2D uTex;',
     'uniform float uAlpha;',
     'out vec4 oColor;',
     'void main() {',
-    '  oColor = texture(uTex, vUV) * uAlpha;',  // 贴图已预乘 alpha
+    /* 贴图是预乘 alpha 的：只压 rgb、保留 a，否则曲面上的暗部会跟着变透明。 */
+    '  vec4 t = texture(uTex, vUV);',
+    '  oColor = vec4(t.rgb * vShade * uAlpha, t.a * uAlpha);',
     '}'
   ].join('\n');
 
@@ -107,19 +113,22 @@
 
     var aPos = gl.getAttribLocation(prog, 'aPos');
     var aUV = gl.getAttribLocation(prog, 'aUV');
+    var aShade = gl.getAttribLocation(prog, 'aShade');
     var uTex = gl.getUniformLocation(prog, 'uTex');
     var uAlpha = gl.getUniformLocation(prog, 'uAlpha');
     gl.uniform1i(uTex, 0);
 
     var vbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    var STRIDE = 6 * 4;
-    var verts = new Float32Array(6 * 6);
+    var STRIDE = 7 * 4;                    /* pos(4) + uv(2) + shade(1) */
+    var verts = new Float32Array(6 * 7);
     gl.bufferData(gl.ARRAY_BUFFER, verts.byteLength, gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 4, gl.FLOAT, false, STRIDE, 0);
     gl.enableVertexAttribArray(aUV);
     gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, STRIDE, 16);
+    gl.enableVertexAttribArray(aShade);
+    gl.vertexAttribPointer(aShade, 1, gl.FLOAT, false, STRIDE, 24);
 
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.STENCIL_TEST);
@@ -243,14 +252,16 @@
      * @param {number} alpha 透明度
      * @param {Array} [uv] [u0,v0,u1,v1]，默认铺满
      * @param {number} [bias] NDC 深度微调（正数往后退），用来避免同平面的描边/阴影打架
+     * @param {number|Array} [shades] 明暗系数（1 = 正面受光）：标量给整片，或四角各一个做渐变
      */
-    function quad(src, pts, alpha, uv, bias) {
+    function quad(src, pts, alpha, uv, bias, shades) {
       if (!(alpha > 0.002)) return;
       var tex = src ? textureFor(src) : white();
       if (!tex) return;
       var u0 = uv ? uv[0] : 0, v0 = uv ? uv[1] : 0;
       var u1 = uv ? uv[2] : 1, v1 = uv ? uv[3] : 1;
       var U = [u0, u1, u1, u0], V = [v0, v0, v1, v1];
+      var S = (shades instanceof Array) ? shades : [shades, shades, shades, shades];
       var W2 = cv.width, H2 = cv.height;
       for (var k = 0; k < 6; k++) {
         var i = ORD[k], p = pts[i];
@@ -258,12 +269,14 @@
            硬件按 1/w 透视校正插值，逐像素拿到的就是这个平面上那一点的真实深度。*/
         var d = p.w > NEAR ? p.w : NEAR;
         var zn = 1 - (2 * NEAR) / d + (bias || 0);
-        verts[k * 6] = (2 * p.x) / W2 - p.w;
-        verts[k * 6 + 1] = p.w - (2 * p.y) / H2;
-        verts[k * 6 + 2] = zn * p.w;
-        verts[k * 6 + 3] = p.w;
-        verts[k * 6 + 4] = U[i];
-        verts[k * 6 + 5] = V[i];
+        verts[k * 7] = (2 * p.x) / W2 - p.w;
+        verts[k * 7 + 1] = p.w - (2 * p.y) / H2;
+        verts[k * 7 + 2] = zn * p.w;
+        verts[k * 7 + 3] = p.w;
+        verts[k * 7 + 4] = U[i];
+        verts[k * 7 + 5] = V[i];
+        var sv = (typeof S[i] === 'number') ? S[i] : 1;
+        verts[k * 7 + 6] = sv < 0.2 ? 0.2 : (sv > 1.6 ? 1.6 : sv);
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, verts);

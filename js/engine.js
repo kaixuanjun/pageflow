@@ -177,6 +177,59 @@
 
     var shadow = shadowSprite(page.w, page.h);
 
+    /* 弯曲的一张纸：沿 u 把纸切成 N 段，每段一个面片。
+       纸面是「绕书脊卷起来的弧」——段与段之间的角度由 js/sheet.js 的物理链给出，
+       所以自由边会落后、会有卷边。明暗按**顶点**算（相邻两面片法线取平均），
+       面片之间才不会出现一条条明暗台阶。 */
+    function drawSheet(sh, img, op) {
+      var ang = sh.angles, N = ang.length;
+      var L = sh.w / N, hh = sh.h / 2, hy = sh.hy;
+      var xs = new Array(N + 1), zs = new Array(N + 1);
+      var x = sh.hx, z = sh.hz;
+      xs[0] = x; zs[0] = z;
+      for (var k = 0; k < N; k++) {
+        x += Math.cos(ang[k]) * L;
+        z += Math.sin(ang[k]) * L;
+        xs[k + 1] = x; zs[k + 1] = z;
+      }
+
+      /* 顶点法线 = 相邻两面片的角度平均；灯光从左上前方来 */
+      var LX = -0.40, LY = -0.50, LZ = 0.76;
+      var nodeShade = new Array(N + 1);
+      for (k = 0; k <= N; k++) {
+        var a0 = ang[k > 0 ? k - 1 : 0];
+        var a1 = ang[k < N ? k : N - 1];
+        var am = (a0 + a1) * 0.5;
+        var nx = -Math.sin(am), nz = Math.cos(am);       /* 纸面朝观者那一侧的法线 */
+        var dot = nx * LX + nz * LZ;                     /* 法线不含 y 分量，LY 不参与 */
+        nodeShade[k] = 0.78 + 0.40 * (dot > 0 ? dot : 0);
+      }
+
+      var minX = xs[0], maxX = xs[0];
+      for (k = 1; k <= N; k++) { if (xs[k] < minX) minX = xs[k]; if (xs[k] > maxX) maxX = xs[k]; }
+
+      /* 投影阴影：整张纸的外形压在书页平面上，用模糊精灵铺一层（不写深度） */
+      var pad = (maxX - minX) * 0.06 + 4;
+      var zSh = sh.hz - 5;
+      painter.depthWrite(false);
+      painter.quad(shadow,
+        [projH(minX - pad, hy - hh - pad, zSh), projH(maxX + pad, hy - hh - pad, zSh),
+         projH(maxX + pad, hy + hh + pad, zSh), projH(minX - pad, hy + hh + pad, zSh)],
+        Math.min(1, 0.16 + 0.26 * (sh.lift || 0)) * op);
+      painter.depthWrite(true);
+
+      /* 纸面：k 递增时 z 单调递增（弧朝观者鼓），按 k 升序画就是由远及近 */
+      for (k = 0; k < N; k++) {
+        var P0 = projH(xs[k], hy - hh, zs[k]);
+        var P1 = projH(xs[k + 1], hy - hh, zs[k + 1]);
+        var P2 = projH(xs[k + 1], hy + hh, zs[k + 1]);
+        var P3 = projH(xs[k], hy + hh, zs[k]);
+        painter.quad(img, [P0, P1, P2, P3], op,
+          [k / N, 0, (k + 1) / N, 1], 0,
+          [nodeShade[k], nodeShade[k + 1], nodeShade[k + 1], nodeShade[k]]);
+      }
+    }
+
     /* ───────────── GPU 精确透视（首选路径） ───────────── */
     if (painter && painter.quad) {
       painter.begin();
@@ -194,6 +247,12 @@
         var gey = rot3(0, gph, 0, pp.rx, pp.ry, pp.rz);
         var gx = gb[0] + pp.x, gy = gb[1] + pp.y, gz = gb[2] + pp.z;
         var gimg = getPage ? getPage(ii) : null;
+
+        /* 正在翻的那一张走曲面路径（物理弯页 + 法线明暗 + 投影阴影） */
+        if (pp.sheet && gimg && gimg.width && gimg.height) {
+          drawSheet(pp.sheet, gimg, op);
+          continue;
+        }
 
         var Q = function (u, v) {
           return projH(gx + u * gex[0] + v * gey[0],
