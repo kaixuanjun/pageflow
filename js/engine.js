@@ -180,15 +180,9 @@
     /* ───────────── GPU 精确透视（首选路径） ───────────── */
     if (painter && painter.quad) {
       painter.begin();
-      /* 跨布局形变时页面会真正互相穿过 → 逐像素深度；同布局内部（以及形变刚起步
-         / 快收尾的那一小段，此时几何还基本是成型的扇形）用整页排序，否则成型的
-         扇形/画廊会被邻页切出「互相穿插」的穿模感。 */
-      if (painter.depthTest) {
-        var morphing = !!(scene.from && scene.to &&
-          scene.from.layout !== scene.to.layout &&
-          scene.e > 0.06 && scene.e < 0.94);
-        painter.depthTest(morphing);
-      }
+      /* 始终用整页排序（画家算法）：纸片必须完整，不接受逐像素穿插。
+         层级换手靠 core.js 在换布局时给的横向「先让开、再插队」弧线消化。 */
+      if (painter.depthTest) painter.depthTest(false);
       var holes = [];
       for (var gi = 0; gi < order.length; gi++) {
         var ii = order[gi], pp = poses[ii];

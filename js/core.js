@@ -331,6 +331,16 @@
     }
   };
 
+  /* 按 z 升序排名（0 = 最远 = 最先画） */
+  function zRanks(poses) {
+    var idx = [];
+    for (var i = 0; i < poses.length; i++) idx.push(i);
+    idx.sort(function (x, y) { return poses[x].z - poses[y].z; });
+    var r = new Array(poses.length);
+    for (i = 0; i < idx.length; i++) r[idx[i]] = i;
+    return r;
+  }
+
   function layoutPoses(id, opt) {
     var fn = LAYOUT_FN[id] || LAYOUT_FN.stack;
     return fn(opt);
@@ -388,7 +398,37 @@
       var pa = layoutPoses(a.layout, base);
       var pb = layoutPoses(b.layout, base);
       poses = new Array(n);
-      for (var j = 0; j < n; j++) poses[j] = mixPose(pa[j], pb[j], e);
+      var rankA = zRanks(pa), rankB = zRanks(pb), pw = ctx.page.w;
+      var arc = Math.sin(Math.PI * e);
+
+      /* 形变过程中两个布局对 z 的用法完全不同，逐项插值出来的 z 会互相穿越 ——
+         两张完整的纸叠在一起，这个先后就只能整块换手，看起来是某一张瞬间盖到
+         最上面。所以形变期间改用「离聚焦页越近越靠上」的固定叠放次序（和真实
+         卡牌一致），并把 z 按这个次序拉成单调序列，任何一帧都不会再穿越。 */
+      var order = [];
+      for (var j = 0; j < n; j++) {
+        poses[j] = mixPose(pa[j], pb[j], e);
+        order.push({ j: j, k: Math.abs(j - fNow) });
+      }
+      order.sort(function (x, y) { return (y.k - x.k) || (x.j - y.j); });  /* 远的在前 */
+      var cap = -1e9;
+      for (var o = 0; o < order.length; o++) {
+        var po = poses[order[o].j];
+        if (po.z < cap + 0.02) po.z = cap + 0.02;
+        cap = po.z;
+      }
+
+      /* 剩下唯一会换手的是「离聚焦页一样远」的两张（左右对称那一对）：让正在
+         插队的那张先横向滑出对方的遮挡范围，插上去之后再滑回原位。两端 arc=0。 */
+      if (arc > 0.001) {
+        for (j = 0; j < n; j++) {
+          var dRank = rankB[j] - rankA[j];         /* >0 往画面近处插队 */
+          if (dRank <= 0) continue;
+          var mag = Math.min(dRank, 4) / 4;
+          var amp = (0.22 + 0.30 * mag) * pw * arc;
+          poses[j].x += (pb[j].x >= 0 ? 1 : -1) * amp;  /* 往自己那一侧滑出去 */
+        }
+      }
     }
 
     var cam = {
