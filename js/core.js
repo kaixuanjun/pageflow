@@ -341,16 +341,6 @@
     }
   };
 
-  /* 按 z 升序排名（0 = 最远 = 最先画） */
-  function zRanks(poses) {
-    var idx = [];
-    for (var i = 0; i < poses.length; i++) idx.push(i);
-    idx.sort(function (x, y) { return poses[x].z - poses[y].z; });
-    var r = new Array(poses.length);
-    for (i = 0; i < idx.length; i++) r[idx[i]] = i;
-    return r;
-  }
-
   function layoutPoses(id, opt) {
     var fn = LAYOUT_FN[id] || LAYOUT_FN.stack;
     return fn(opt);
@@ -411,8 +401,6 @@
       var pa = layoutPoses(a.layout, flatBase);
       var pb = layoutPoses(b.layout, flatBase);
       poses = new Array(n);
-      var rankA = zRanks(pa), rankB = zRanks(pb), pw = ctx.page.w;
-      var arc = Math.sin(Math.PI * e);
 
       /* 形变过程中两个布局对 z 的用法完全不同，逐项插值出来的 z 会互相穿越 ——
          两张完整的纸叠在一起，这个先后就只能整块换手，看起来是某一张瞬间盖到
@@ -421,8 +409,15 @@
          把越界的 z 夹到邻居旁边 —— 夹会毁掉原有的前后纵深（书本里已经翻过去的
          页本来退得很远，一夹就被拉到最前面来了）。 */
       var order = [], zs = [];
+      var kmax = Math.max(1, (n - 1) / 2);
       for (var j = 0; j < n; j++) {
-        poses[j] = mixPose(pa[j], pb[j], e);
+        /* 逐页错开形变进度：离聚焦页越近越早出发。所有页面同时形变的话，中段会
+           变成一副「摊开的牌」——每张都带着一半书本姿态一半画廊倾角、还彼此拉开
+           等距，看起来像散架；错开之后中段只有少数几张在途中，像真的一把把发牌。 */
+        var kj = Math.min(Math.abs(j - fNow) / kmax, 1);
+        var lag = 0.42 * kj;
+        var ej = clamp((e - lag) / (1 - lag), 0, 1);
+        poses[j] = mixPose(pa[j], pb[j], ej);
         order.push({ j: j, k: Math.abs(j - fNow) });
         zs.push(poses[j].z);
       }
@@ -430,17 +425,10 @@
       zs.sort(function (x, y) { return x - y; });
       for (var o = 0; o < order.length; o++) poses[order[o].j].z = zs[o];
 
-      /* 剩下唯一会换手的是「离聚焦页一样远」的两张（左右对称那一对）：让正在
-         插队的那张先横向滑出对方的遮挡范围，插上去之后再滑回原位。两端 arc=0。 */
-      if (arc > 0.001) {
-        for (j = 0; j < n; j++) {
-          var dRank = rankB[j] - rankA[j];         /* >0 往画面近处插队 */
-          if (dRank <= 0) continue;
-          var mag = Math.min(dRank, 4) / 4;
-          var amp = (0.22 + 0.30 * mag) * pw * arc;
-          poses[j].x += (pb[j].x >= 0 ? 1 : -1) * amp;  /* 往自己那一侧滑出去 */
-        }
-      }
+      /* 注：这里曾经让「正在插队」的页横向滑出去避让，但那个判据是离散的
+         （名次差是整数、左右由 x 的正负决定），名次一变位移就整块跳一下 ——
+         实测单帧能跳 340 单位，比原来那点换手还难看。整页排序 + 上面的次序
+         重排已经保证不会有整块换手，所以这里不再加横向位移。 */
     }
 
     var cam = {
