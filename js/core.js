@@ -368,7 +368,7 @@
    * @param {number} t
    * @param {{n:number,V:{w:number,h:number},page:{w:number,h:number}}} ctx
    */
-  function sampleScene(kfs, t, ctx) {
+  function targets(kfs, t, ctx) {
     var n = ctx.n;
     if (!n || !kfs.length) return null;
 
@@ -459,7 +459,32 @@
       rot: lerp(a.rot, b.rot, e)
     };
 
-    return { poses: poses, cam: cam, focus: fNow, from: a, to: b, e: e };
+    return { poses: poses, cam: cam, focus: fNow, from: a, to: b, e: e,
+             aIdx: kfs.indexOf(a), bIdx: kfs.indexOf(b) };
+  }
+
+  /* 动画到底怎么走：交给物理引擎（js/physics.js）。
+     它把每条关键帧的目标位姿当成"想要的位置"，用有质量、有惯性的纸去追，
+     并在纸与纸之间做接触解算 —— 于是位移有起速与收尾、纸不会互相穿过。
+     PF.core.physics = false 或 URL 带 ?phys=0 可退回纯解析插值（排查用）。 */
+  function physicsOn() {
+    if (PF.core.physics === false) return false;
+    if (typeof location !== 'undefined' && /[?&#](phys=0|nophys)\b/.test(location.search + location.hash)) return false;
+    return !!(PF.Phys && PF.Phys.sample);
+  }
+
+  function sampleScene(kfs, t, ctx) {
+    if (physicsOn()) {
+      var dur = (PF.state && PF.state.dur) || (kfs.length ? kfs[kfs.length - 1].t + 1 : 1);
+      try {
+        var out = PF.Phys.sample(kfs, t, ctx, dur);
+        if (out) return out;
+      } catch (err) {
+        if (typeof console !== 'undefined') console.warn('[PAGEFLOW] 物理解算失败，退回解析插值：', err && err.message);
+        PF.core.physics = false;
+      }
+    }
+    return targets(kfs, t, ctx);
   }
 
   /* ─────────────────────── 关键帧构造 ─────────────────────── */
@@ -521,6 +546,7 @@
     fitPage: fitPage,
     layoutPoses: layoutPoses,
     sampleScene: sampleScene,
+    targets: targets,
     makeKeyframe: makeKeyframe,
     defaultKeyframes: defaultKeyframes
   };

@@ -208,14 +208,24 @@
       var minX = xs[0], maxX = xs[0];
       for (k = 1; k <= N; k++) { if (xs[k] < minX) minX = xs[k]; if (xs[k] > maxX) maxX = xs[k]; }
 
-      /* 投影阴影：整张纸的外形压在书页平面上，用模糊精灵铺一层（不写深度） */
-      var pad = (maxX - minX) * 0.06 + 4;
+      /* 投影阴影：跟着纸的轮廓走 —— 逐段把该段的落影铺在书页平面上。
+         逐段画而不是铺一个包围盒，纸卷起来、叠起来的时候阴影形状才对得上；
+         段与段之间留 1 像素重叠，接缝处的 alpha 只叠一次（不叠出亮线）。 */
       var zSh = sh.hz - 5;
+      var lift = sh.lift || 0;
+      var shA = Math.min(0.55, 0.20 + 0.42 * lift) * op;
       painter.depthWrite(false);
-      painter.quad(shadow,
-        [projH(minX - pad, hy - hh - pad, zSh), projH(maxX + pad, hy - hh - pad, zSh),
-         projH(maxX + pad, hy + hh + pad, zSh), projH(minX - pad, hy + hh + pad, zSh)],
-        Math.min(1, 0.16 + 0.26 * (sh.lift || 0)) * op);
+      if (shA > 0.004) {
+        var padY = hh * 0.06 + 3;
+        for (k = 0; k < N; k++) {
+          var sx0 = Math.min(xs[k], xs[k + 1]), sx1 = Math.max(xs[k], xs[k + 1]);
+          if (sx1 - sx0 < 0.6) sx0 -= 0.3, sx1 += 0.3;
+          painter.quad(shadow,
+            [projH(sx0 - 1, hy - hh - padY, zSh), projH(sx1 + 1, hy - hh - padY, zSh),
+             projH(sx1 + 1, hy + hh + padY, zSh), projH(sx0 - 1, hy + hh + padY, zSh)],
+            shA);
+        }
+      }
       painter.depthWrite(true);
 
       /* 纸面：k 递增时 z 单调递增（弧朝观者鼓），按 k 升序画就是由远及近 */
