@@ -140,27 +140,28 @@
       return out;
     },
 
-    /* 堆叠：卡片叠放，聚焦页抽到最前（focus 连续 → 抽牌一张接一张，不会瞬移） */
+    /* 堆叠：卡牌叠成一副，聚焦页抽到最前。整副牌的位置跟着 focus 走（q = i - fc），
+       所以每翻一页整副牌都会往前推一格；正在离开最前面的那一张还会额外向左滑出去、
+       露着半个身子沉到牌堆下面 —— 抽牌动作是看得见的，不是原地换个高亮。 */
     stack: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
-      var mid = (n - 1) / 2;
       var sp = 17 * o.p1;
       var span = Math.min(sp * (n - 1), 360);
       var step = n > 1 ? span / (n - 1) : 0;
       var jit = 2.5 * o.p2 * DEG;
       var out = [];
       for (var i = 0; i < n; i++) {
-        var d = i - mid;
-        var k = Math.abs(i - fc);              /* 到聚焦页的距离：0 = 最上面那叠 */
-        var w = clamp(1 - k, 0, 1);
+        var q = i - fc;                        /* 相对聚焦页：>0 还没翻到，<0 已经翻过 */
+        var k = Math.abs(q);
+        var w = clamp(1 - k, 0, 1);            /* 聚焦程度：1 = 正被抽出来的那张 */
+        var sw = Math.sin(Math.PI * clamp(-q, 0, 1));   /* 刚离开最前的那张：滑开再落下 */
         var p = emptyPose();
-        p.x = d * step;
-        p.y = -d * step * 0.55;
-        /* z 必须随 k 单调下降，聚焦页的抬升也要随 k 递减 —— 否则抽牌时后面那张会
-           一瞬间盖到最前面（两页几乎重叠，看起来就是硬切）。 */
-        p.z = -k * 16 + 60 * w;
-        p.scale = 1 + 0.04 * w;
-        p.rz = Math.sin(i * 2.3999 + 0.7) * jit * (1 - 0.88 * w);
+        p.x = q * step - sw * 92 * o.p1;
+        p.y = -q * step * 0.55 - 16 * w;
+        /* z 随 k 单调下降（抽牌不会突然换手），聚焦页再额外抬到最前 */
+        p.z = -k * 16 + 200 * w + 70 * sw;
+        p.scale = 1 + 0.07 * w;
+        p.rz = Math.sin(i * 2.3999 + 0.7) * jit * (1 - 0.88 * w) + sw * 7 * DEG;
         out.push(p);
       }
       return out;
@@ -201,7 +202,11 @@
     book: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
       var page = o.page, V = o.V;
-      var tilt = 8.5 * o.p2 * DEG;
+      /* o.flat 只在"正在切到别的布局"时由 sampleScene 传进来（中段为 1、两端为 0）：
+         书页朝观者翘起的那个倾角和翻页时的摆动幅度会收敛掉。否则和画廊的倾斜叠加
+         起来，已经翻过去的页会一张平一张斜，看着像错位。 */
+      var flat = clamp(o.flat || 0, 0, 1);
+      var tilt = 8.5 * o.p2 * DEG * (1 - flat);
       /* 快到最后一页时右页位会空出来：smoothly 把整体宽度收回去，避免翻页途中尺寸突变 */
       var two = clamp(n - 1 - fc, 0, 1);
       var fit = Math.min(1, (V.w * 0.90) / (page.w * (1 + two) + 12 * o.p1));
@@ -227,8 +232,8 @@
           /* 正在翻的这一张：抬起来、绕过书脊，两端用 sin 平滑接上 */
           var sw = Math.sin((1 - q) * Math.PI);
           p.x = shift - halfW + q * step;
-          p.ry = -tilt + 2 * tilt * (1 - q) + 62 * DEG * sw;
-          p.z = 120 * sw;
+          p.ry = -tilt + 2 * tilt * (1 - q) + 62 * DEG * sw * (1 - flat);
+          p.z = 120 * sw * (1 - 0.6 * flat);
           p.opacity = 1;
         } else if (q > -1) {
           /* 刚翻过去的那一张：原地压在左页位上，等下一张落下来才让位 */
@@ -237,19 +242,21 @@
           p.z = -6;
           p.opacity = 1;
         } else {
-          /* 再往左是已经翻过去的一叠 */
-          var back = Math.min(-q - 1, 3);
-          p.x = shift - halfW + (q + 1) * step;
+          /* 再往左是已经翻过去的一叠。往左退的距离要收着（最多约 1.2 个页宽），
+             否则切到别的布局时这些页要横跨大半个画面重新排位，看起来像错位。 */
+          var back = Math.min(-q - 1, 1.2);
+          p.x = shift - halfW + (q + 1) * step * 0.55;
           p.ry = tilt + back * 7 * DEG;
-          p.z = -6 - back * 170;
-          p.opacity = clamp(1 - back * 0.5, 0, 1);
+          p.z = -6 - back * 190;
+          p.opacity = clamp(1 - back * 0.7, 0, 1);
         }
         out.push(p);
       }
       return out;
     },
 
-    /* 扇形：绕下方支点展开（focus 连续 → 整把扇子连续转） */
+    /* 扇形：绕下方支点展开（focus 连续 → 整把扇子连续转），聚焦页会从扇面里
+       被抽出来、朝观者抬起；换页时上一张落回扇面、下一张抽出来，动作是连续的。 */
     fan: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
       var stepA = 4.6 * o.p1 * DEG;
@@ -258,11 +265,14 @@
       for (var i = 0; i < n; i++) {
         var d = clamp(i - fc, -11, 11);
         var a = d * stepA;
+        var w = clamp(1 - Math.abs(d), 0, 1);          /* 聚焦程度 */
+        var sw = Math.sin(Math.PI * clamp(-d, 0, 1));  /* 刚离开聚焦位的那张：滑开再落回 */
         var p = emptyPose();
-        p.x = R * Math.sin(a);
-        p.y = R * (1 - Math.cos(a));
-        p.rz = a;
-        p.z = -Math.abs(d) * 7;
+        p.x = R * Math.sin(a) - sw * 48 * o.p1;
+        p.y = R * (1 - Math.cos(a)) - 38 * w;
+        p.rz = a + sw * 6 * DEG;
+        p.z = -Math.abs(d) * 7 + 260 * w + 50 * sw;
+        p.scale = 1 + 0.10 * w;
         p.opacity = clamp(1 - Math.max(0, Math.abs(d) - 7) * 0.2, 0, 1);
         out.push(p);
       }
@@ -394,9 +404,12 @@
       /* 同一个布局：直接在连续 focus 上采样，位移/翻页都是真连续 */
       poses = layoutPoses(a.layout, base);
     } else {
-      /* 换布局：两端各采样一次再形变混合，端点值保持精确 */
-      var pa = layoutPoses(a.layout, base);
-      var pb = layoutPoses(b.layout, base);
+      /* 换布局：两端各采样一次再形变混合，端点值保持精确。
+         中段把「书页朝观者翘起/翻页摆动」这类布局自带的姿态收敛掉（flat 两端为 0，
+         所以关键帧本身还是原样），免得和目标布局的倾斜互相打架、已经翻过的页错位。 */
+      var flatBase = { n: n, p1: p1, p2: p2, V: ctx.V, page: ctx.page, focus: fNow, flat: Math.sin(Math.PI * e) };
+      var pa = layoutPoses(a.layout, flatBase);
+      var pb = layoutPoses(b.layout, flatBase);
       poses = new Array(n);
       var rankA = zRanks(pa), rankB = zRanks(pb), pw = ctx.page.w;
       var arc = Math.sin(Math.PI * e);
@@ -404,19 +417,18 @@
       /* 形变过程中两个布局对 z 的用法完全不同，逐项插值出来的 z 会互相穿越 ——
          两张完整的纸叠在一起，这个先后就只能整块换手，看起来是某一张瞬间盖到
          最上面。所以形变期间改用「离聚焦页越近越靠上」的固定叠放次序（和真实
-         卡牌一致），并把 z 按这个次序拉成单调序列，任何一帧都不会再穿越。 */
-      var order = [];
+         卡牌一致）。做法是把混合出来的那批 z 值**整体按次序重新分配**，而不是
+         把越界的 z 夹到邻居旁边 —— 夹会毁掉原有的前后纵深（书本里已经翻过去的
+         页本来退得很远，一夹就被拉到最前面来了）。 */
+      var order = [], zs = [];
       for (var j = 0; j < n; j++) {
         poses[j] = mixPose(pa[j], pb[j], e);
         order.push({ j: j, k: Math.abs(j - fNow) });
+        zs.push(poses[j].z);
       }
       order.sort(function (x, y) { return (y.k - x.k) || (x.j - y.j); });  /* 远的在前 */
-      var cap = -1e9;
-      for (var o = 0; o < order.length; o++) {
-        var po = poses[order[o].j];
-        if (po.z < cap + 0.02) po.z = cap + 0.02;
-        cap = po.z;
-      }
+      zs.sort(function (x, y) { return x - y; });
+      for (var o = 0; o < order.length; o++) poses[order[o].j].z = zs[o];
 
       /* 剩下唯一会换手的是「离聚焦页一样远」的两张（左右对称那一对）：让正在
          插队的那张先横向滑出对方的遮挡范围，插上去之后再滑回原位。两端 arc=0。 */
