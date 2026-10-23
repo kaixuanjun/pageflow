@@ -151,11 +151,15 @@
       var out = [];
       for (var i = 0; i < n; i++) {
         var d = i - mid;
-        var w = clamp(1 - Math.abs(i - fc), 0, 1);
+        var k = Math.abs(i - fc);              /* 到聚焦页的距离：0 = 最上面那叠 */
+        var w = clamp(1 - k, 0, 1);
         var p = emptyPose();
         p.x = d * step;
         p.y = -d * step * 0.55;
-        p.z = d * 3 + 200 * w;
+        /* z 必须随 k 单调下降，聚焦页的抬升也要随 k 递减 —— 否则抽牌时后面那张会
+           一瞬间盖到最前面（两页几乎重叠，看起来就是硬切）。 */
+        p.z = -k * 16 + 60 * w;
+        p.scale = 1 + 0.04 * w;
         p.rz = Math.sin(i * 2.3999 + 0.7) * jit * (1 - 0.88 * w);
         out.push(p);
       }

@@ -180,6 +180,15 @@
     /* ───────────── GPU 精确透视（首选路径） ───────────── */
     if (painter && painter.quad) {
       painter.begin();
+      /* 跨布局形变时页面会真正互相穿过 → 逐像素深度；同布局内部（以及形变刚起步
+         / 快收尾的那一小段，此时几何还基本是成型的扇形）用整页排序，否则成型的
+         扇形/画廊会被邻页切出「互相穿插」的穿模感。 */
+      if (painter.depthTest) {
+        var morphing = !!(scene.from && scene.to &&
+          scene.from.layout !== scene.to.layout &&
+          scene.e > 0.06 && scene.e < 0.94);
+        painter.depthTest(morphing);
+      }
       var holes = [];
       for (var gi = 0; gi < order.length; gi++) {
         var ii = order[gi], pp = poses[ii];
@@ -198,19 +207,26 @@
                        gz + u * gex[2] + v * gey[2]);
         };
 
-        /* 阴影：页平面外扩 SHADOW_PAD，精灵 uv 铺满 */
+        /* 阴影：页平面外扩 SHADOW_PAD，精灵 uv 铺满。
+           不写深度：它只是同一张页面平面上的装饰，写了深度会把自己后面那一片页面判死 */
         if (op > 0.02) {
           var pd = SHADOW_PAD;
+          painter.depthWrite(false);
           painter.quad(shadow,
             [Q(-pd, -pd), Q(1 + pd, -pd), Q(1 + pd, 1 + pd), Q(-pd, 1 + pd)], op * 0.62);
+          painter.depthWrite(true);
         }
 
         if (gimg && gimg.width && gimg.height) {
-          /* 1 设备像素的描边：按页面单位换算，任何缩放/透视下都正好 1px */
+          /* 1 设备像素的描边：按页面单位换算，任何缩放/透视下都正好 1px（同样不写深度） */
           var eps = 1 / Math.max(1, gpw * s);
+          painter.depthWrite(false);
           painter.quad(null,
             [Q(-eps, -eps), Q(1 + eps, -eps), Q(1 + eps, 1 + eps), Q(-eps, 1 + eps)], 0.15 * op);
+          /* 半透明的页只参与混合、不写深度，免得把更远处的页判死 */
+          painter.depthWrite(op >= 0.99);
           painter.quad(gimg, [Q(0, 0), Q(1, 0), Q(1, 1), Q(0, 1)], op);
+          painter.depthWrite(true);
         } else {
           var hc = [Q(0, 0), Q(1, 0), Q(1, 1), Q(0, 1)];
           for (var hj = 0; hj < 4; hj++) { hc[hj] = [hc[hj].x / hc[hj].w, hc[hj].y / hc[hj].w]; }

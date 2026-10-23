@@ -23,12 +23,12 @@
 
   var VERT = [
     '#version 300 es',
-    'in vec3 aPos;',      // (X*w, Y*w, w) —— 除法交给光栅化器
+    'in vec4 aPos;',      // (X*w, Y*w, zNdc*w, w) —— 除法交给光栅化器
     'in vec2 aUV;',
     'out vec2 vUV;',
     'void main() {',
     '  vUV = aUV;',
-    '  gl_Position = vec4(aPos.xy, 0.0, aPos.z);',
+    '  gl_Position = aPos;',
     '}'
   ].join('\n');
 
@@ -69,7 +69,15 @@
     var opts = {
       alpha: true,                 // 背景留给 2D，这里只要透明底 + 页面
       antialias: true,             // 页面斜边的锯齿交给 MSAA
-      depth: false,
+      /*
+       * 开深度缓冲是「不再整页翻层」的关键：
+       *   画家算法只能按**整页**的 z 排序，两页的 z 一交叉，前者整块瞬间跳到后者前面 ——
+       *   用户看到的就是「后面那页一下子提到最高层」。
+       *   有了深度缓冲，遮挡关系变成**逐像素**判定的：某个像素只有在两页在那个点上
+       *   深度真正相等的瞬间才换手，也就是沿着两页相交的那条线一像素一像素地换过去，
+       *   整页的硬切换就消失了。
+       */
+      depth: true,
       stencil: false,
       premultipliedAlpha: true,
       /*
@@ -105,16 +113,19 @@
 
     var vbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    var verts = new Float32Array(6 * 5);
+    var STRIDE = 6 * 4;
+    var verts = new Float32Array(6 * 6);
     gl.bufferData(gl.ARRAY_BUFFER, verts.byteLength, gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(aPos);
-    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 20, 0);
+    gl.vertexAttribPointer(aPos, 4, gl.FLOAT, false, STRIDE, 0);
     gl.enableVertexAttribArray(aUV);
-    gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 20, 12);
+    gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, STRIDE, 16);
 
     gl.disable(gl.CULL_FACE);
-    gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.STENCIL_TEST);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(true);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -194,19 +205,46 @@
     function begin() {
       gl.viewport(0, 0, cv.width, cv.height);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.depthMask(true);
+      depthW = true;
     }
 
     var ORD = [0, 1, 2, 0, 2, 3];
+    var NEAR = 140;          // 与 engine 的 den 下限一致：最近处映射到 NDC z = -1
+    var depthW = true;
+    var depthT = true;
+
+    /**
+     * 布局之间做形变（morph）时，页面会真的互相穿过：这时必须逐像素判遮挡，
+     * 否则「后面那张」会在 z 交叉的那一帧整块跳到最前面（= 硬切）。
+     * 同一种布局内部则关掉深度测试，保持画家算法的整页遮挡 —— 纸片不该互相穿插。
+     */
+    function depthTest(on) {
+      if (on === depthT) return;
+      depthT = on;
+      if (on) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
+    }
+
+    /**
+     * 阴影 / 描边这类「贴在同一张页面平面上、但不该挡住别的页面」的东西用：
+     * 关掉深度写入、只留深度测试。否则阴影那张外扩的大四边形会把它后面所有页面都遮掉。
+     */
+    function depthWrite(on) {
+      if (on === depthW) return;
+      depthW = on;
+      gl.depthMask(on);
+    }
 
     /**
      * 画一个贴图四边形
      * @param {CanvasImageSource|HTMLCanvasElement} src 贴图源（null 时用纯白）
-     * @param {Array} pts 四个角 [{x,y,w}]，顺序 左上/右上/右下/左下（已乘过 w）
+     * @param {Array} pts 四个角 [{x,y,w}]，顺序 左上/右上/右下/左下（x、y 已乘过 w，w = 透视分母）
      * @param {number} alpha 透明度
      * @param {Array} [uv] [u0,v0,u1,v1]，默认铺满
+     * @param {number} [bias] NDC 深度微调（正数往后退），用来避免同平面的描边/阴影打架
      */
-    function quad(src, pts, alpha, uv) {
+    function quad(src, pts, alpha, uv, bias) {
       if (!(alpha > 0.002)) return;
       var tex = src ? textureFor(src) : white();
       if (!tex) return;
@@ -216,11 +254,16 @@
       var W2 = cv.width, H2 = cv.height;
       for (var k = 0; k < 6; k++) {
         var i = ORD[k], p = pts[i];
-        verts[k * 5] = (2 * p.x) / W2 - p.w;
-        verts[k * 5 + 1] = p.w - (2 * p.y) / H2;
-        verts[k * 5 + 2] = p.w;
-        verts[k * 5 + 3] = U[i];
-        verts[k * 5 + 4] = V[i];
+        /* 深度：把透视分母 d 单调映到 [-1,1)，最近 = -1。
+           硬件按 1/w 透视校正插值，逐像素拿到的就是这个平面上那一点的真实深度。*/
+        var d = p.w > NEAR ? p.w : NEAR;
+        var zn = 1 - (2 * NEAR) / d + (bias || 0);
+        verts[k * 6] = (2 * p.x) / W2 - p.w;
+        verts[k * 6 + 1] = p.w - (2 * p.y) / H2;
+        verts[k * 6 + 2] = zn * p.w;
+        verts[k * 6 + 3] = p.w;
+        verts[k * 6 + 4] = U[i];
+        verts[k * 6 + 5] = V[i];
       }
       gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, verts);
@@ -237,7 +280,8 @@
     }
 
     return {
-      canvas: cv, gl: gl, begin: begin, quad: quad,
+      canvas: cv, gl: gl, begin: begin, quad: quad, depthWrite: depthWrite,
+      depthTest: depthTest,
       textureFor: textureFor, white: white, dispose: dispose,
       aniso: anisoMax, mip: true,
       isLost: function () { return lost || gl.isContextLost(); },
