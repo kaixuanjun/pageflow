@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PAGEFLOW · PDF 翻页动效工坊</title>
+<link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ───────────────────────── TOP BAR ───────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 28 28" fill="none" aria-hidden="true">
+          <rect x="6.5" y="3.5" width="12" height="16" rx="2.4" stroke="currentColor" stroke-width="1.5" opacity=".38"/>
+          <rect x="9" y="6" width="12" height="16" rx="2.4" stroke="currentColor" stroke-width="1.5" opacity=".7"/>
+          <rect x="11.5" y="8.5" width="12" height="16" rx="2.4" fill="currentColor" opacity=".95"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <b>PAGEFLOW</b>
+        <span>PDF 翻页动效工坊</span>
+      </div>
+    </div>
+
+    <div class="file-chip" id="fileChip" hidden>
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M4 1.8h5l3.2 3.2v9.2H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+        <path d="M9 1.8V5h3.2" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+      </svg>
+      <span class="name" id="fileName">document.pdf</span>
+      <em id="fileMeta">· 0 页</em>
+      <button class="mini" id="btnChangePdf" type="button">更换</button>
+    </div>
+
+    <div class="topbar-right">
+      <div class="seg" id="aspectSeg" role="group" aria-label="画幅比例">
+        <button type="button" data-aspect="16:9" class="on">16:9</button>
+        <button type="button" data-aspect="9:16">9:16</button>
+        <button type="button" data-aspect="1:1">1:1</button>
+      </div>
+      <button class="btn ghost" id="btnDemo" type="button">
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 4.2v7.6l6-3.8z" fill="currentColor"/></svg>
+        示例
+      </button>
+      <button class="btn primary" id="btnExport" type="button">
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 2v7.2M5.2 6.6 8 9.4l2.8-2.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M3 11.2v1.6c0 .7.5 1.2 1.2 1.2h7.6c.7 0 1.2-.5 1.2-1.2v-1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span>导出视频</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ───────────────────────── LEFT PANEL ───────────────────────── -->
+  <aside class="panel panel-left">
+    <div class="pblock">
+      <div class="phead">
+        <h3>布局模式</h3>
+        <span class="tagline" id="layoutTarget">关键帧 #1</span>
+      </div>
+      <div class="layout-grid" id="layoutGrid"></div>
+    </div>
+
+    <div class="pblock grow">
+      <div class="phead">
+        <h3>页面</h3>
+        <span class="tagline">点击设为聚焦页</span>
+      </div>
+      <div class="thumbs" id="thumbs">
+        <div class="thumbs-empty">导入 PDF 后显示页面</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ───────────────────────── STAGE ───────────────────────── -->
+  <main class="stage" id="stage">
+    <div class="stage-glow"></div>
+    <div class="stage-frame" id="stageFrame">
+      <canvas id="canvas" width="1920" height="1080"></canvas>
+      <div class="frame-corner tl"></div><div class="frame-corner tr"></div>
+      <div class="frame-corner bl"></div><div class="frame-corner br"></div>
+    </div>
+
+    <div class="playbar" id="playbar">
+      <button class="pb-btn" id="btnPrevKf" type="button" title="上一个关键帧">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M11 3.2v9.6L4.6 8z" fill="currentColor"/><rect x="2.6" y="3.2" width="1.6" height="9.6" rx=".8" fill="currentColor"/></svg>
+      </button>
+      <button class="pb-btn play" id="btnPlay" type="button" title="播放 / 暂停 (空格)">
+        <svg class="ic-play" viewBox="0 0 20 20" fill="none"><path d="M6.8 3.7v12.6L16 10z" fill="currentColor"/></svg>
+        <svg class="ic-pause" viewBox="0 0 20 20" fill="none"><rect x="5.4" y="3.6" width="3.4" height="12.8" rx="1.2" fill="currentColor"/><rect x="11.2" y="3.6" width="3.4" height="12.8" rx="1.2" fill="currentColor"/></svg>
+      </button>
+      <button class="pb-btn" id="btnNextKf" type="button" title="下一个关键帧">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M5 3.2v9.6L11.4 8z" fill="currentColor"/><rect x="11.8" y="3.2" width="1.6" height="9.6" rx=".8" fill="currentColor"/></svg>
+      </button>
+      <div class="pb-time"><b id="pbTime">0.0</b><i>/</i><span id="pbDur">12.0</span><i>s</i></div>
+      <button class="pb-btn sm" id="btnLoop" type="button" title="循环播放">
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 6.2A3.2 3.2 0 0 1 6.2 3h5.3M13 9.8A3.2 3.2 0 0 1 9.8 13H4.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="m10.2 1.3 1.5 1.7-1.5 1.7M5.8 14.7l-1.5-1.7 1.5-1.7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <!-- empty state -->
+    <div class="dropzone" id="dropzone">
+      <div class="dz-box" id="dzBox">
+        <div class="dz-icon">
+          <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <rect x="14" y="8" width="30" height="40" rx="4" stroke="currentColor" stroke-width="1.6" opacity=".28"/>
+            <rect x="20.5" y="13" width="30" height="40" rx="4" stroke="currentColor" stroke-width="1.6" opacity=".5"/>
+            <rect x="27" y="18" width="30" height="40" rx="4" fill="currentColor" opacity=".1" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M42 32v16M35 39l7-7 7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h2>拖入 PDF，开始编排翻页动效</h2>
+        <p>在时间轴上打关键帧，控制翻页、布局与镜头 · 一键导出渲染视频</p>
+        <div class="dz-actions">
+          <button class="btn primary lg" id="btnPick" type="button">选择 PDF 文件</button>
+          <button class="btn ghost lg" id="btnDemo2" type="button">载入示例</button>
+        </div>
+        <div class="dz-note">全部在本地浏览器内完成 · 文件不会上传</div>
+      </div>
+    </div>
+
+    <div class="loading" id="loading" hidden>
+      <div class="ld-card">
+        <div class="ld-spin"></div>
+        <div class="ld-text"><b id="ldTitle">正在解析 PDF…</b><span id="ldSub">准备中</span></div>
+        <div class="ld-bar"><i id="ldBar"></i></div>
+      </div>
+    </div>
+
+    <div class="drop-overlay" id="dropOverlay"><div>松手以载入 PDF</div></div>
+  </main>
+
+  <!-- ───────────────────────── RIGHT PANEL ───────────────────────── -->
+  <aside class="panel panel-right">
+    <div class="phead">
+      <h3>关键帧</h3>
+      <span class="kf-pill" id="kfPill">#1</span>
+    </div>
+
+    <div class="insp" id="inspector">
+      <div class="row2">
+        <div class="ctrl">
+          <div class="ctrl-top"><label>时间</label></div>
+          <div class="numbox"><input id="inpTime" type="number" min="0" step="0.1" value="0"><span>s</span></div>
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-top"><label>过渡到下一帧</label></div>
+          <select id="inpEase" class="select"></select>
+        </div>
+      </div>
+
+      <div class="sec"><span>聚焦页</span><em id="focusLabel">1 / 1</em></div>
+      <div class="focus-ctl">
+        <button class="sq" id="btnFocusPrev" type="button">−</button>
+        <input type="range" id="inpFocus" min="0" max="0" step="1" value="0">
+        <button class="sq" id="btnFocusNext" type="button">+</button>
+      </div>
+
+      <div class="sec"><span>镜头</span><em>Camera</em></div>
+      <div class="ctrl">
+        <div class="ctrl-top"><label>缩放</label><output id="outZoom">100%</output></div>
+        <input type="range" id="inpZoom" min="0.4" max="2.6" step="0.01" value="1">
+      </div>
+      <div class="row2">
+        <div class="ctrl">
+          <div class="ctrl-top"><label>水平</label><output id="outPanX">0</output></div>
+          <input type="range" id="inpPanX" min="-800" max="800" step="1" value="0">
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-top"><label>垂直</label><output id="outPanY">0</output></div>
+          <input type="range" id="inpPanY" min="-600" max="600" step="1" value="0">
+        </div>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-top"><label>旋转</label><output id="outRot">0°</output></div>
+        <input type="range" id="inpRot" min="-30" max="30" step="0.5" value="0">
+      </div>
+
+      <div class="sec"><span>微调</span><em id="paramHint">堆叠</em></div>
+      <div class="ctrl">
+        <div class="ctrl-top"><label id="lblP1">扩散</label><output id="outP1">100%</output></div>
+        <input type="range" id="inpP1" min="0.2" max="2.2" step="0.01" value="1">
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-top"><label id="lblP2">转角</label><output id="outP2">100%</output></div>
+        <input type="range" id="inpP2" min="0" max="2" step="0.01" value="1">
+      </div>
+
+      <div class="insp-tip">
+        <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.2"/><path d="M8 7.2v4M8 4.9v.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span>调整会实时写入<b>选中</b>的关键帧。拖动时间轴可查看两帧之间的补间动画。</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ───────────────────────── TIMELINE ───────────────────────── -->
+  <footer class="timeline">
+    <div class="tl-tools">
+      <div class="tl-time">
+        <b id="tlCur">0.0</b><span>/</span><i id="tlDur">12.0</i><span>s</span>
+      </div>
+      <div class="tl-btns">
+        <button class="tbtn accent" id="btnAddKf" type="button">
+          <svg viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          关键帧
+        </button>
+        <button class="tbtn" id="btnDupKf" type="button" title="复制当前关键帧">
+          <svg viewBox="0 0 14 14" fill="none"><rect x="2.2" y="2.2" width="7" height="7" rx="1.4" stroke="currentColor" stroke-width="1.2"/><path d="M5 11.6h5.2c.7 0 1.2-.5 1.2-1.2V5.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="tbtn" id="btnDelKf" type="button" title="删除当前关键帧">
+          <svg viewBox="0 0 14 14" fill="none"><path d="M2.6 4h8.8M5.6 4V2.8h2.8V4M3.8 4l.6 7.4h5.2L10.2 4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="tl-dur">
+        <label for="inpDur">总时长</label>
+        <div class="numbox sm"><input id="inpDur" type="number" min="1" max="120" step="0.5" value="12"><span>s</span></div>
+      </div>
+    </div>
+
+    <div class="tl-main" id="tlMain">
+      <div class="tl-ruler-row">
+        <div class="tl-gutter">时间</div>
+        <div class="tl-ruler-wrap" id="rulerWrap"><div class="tl-ruler" id="ruler"></div></div>
+      </div>
+      <div class="tl-lane-row">
+        <div class="tl-gutter lane-label">
+          <svg viewBox="0 0 12 12" fill="none"><path d="M6 1.6 10.4 6 6 10.4 1.6 6z" stroke="currentColor" stroke-width="1.2"/></svg>
+          关键帧
+        </div>
+        <div class="tl-lane-wrap" id="laneWrap">
+          <div class="tl-lane" id="lane">
+            <div class="tl-line" id="tlLine"></div>
+            <div class="tl-playhead" id="playhead"><i></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<!-- ───────────────────────── EXPORT MODAL ───────────────────────── -->
+<div class="modal" id="exportModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h2>导出渲染视频</h2>
+        <p>逐帧渲染当前时间轴，实时录制为视频文件</p>
+      </div>
+      <button class="x" id="btnCloseExport" type="button">
+        <svg viewBox="0 0 16 16" fill="none"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <div class="modal-body" id="exportSetup">
+      <div class="opt-group">
+        <label>画幅</label>
+        <div class="opt-row" id="expAspect">
+          <button type="button" data-v="16:9" class="on">16:9 · 横屏</button>
+          <button type="button" data-v="9:16">9:16 · 竖屏</button>
+          <button type="button" data-v="1:1">1:1 · 方形</button>
+        </div>
+      </div>
+      <div class="opt-group">
+        <label>分辨率</label>
+        <div class="opt-row" id="expRes">
+          <button type="button" data-v="1280">720p</button>
+          <button type="button" data-v="1920" class="on">1080p</button>
+          <button type="button" data-v="2560">1440p</button>
+        </div>
+      </div>
+      <div class="opt-group">
+        <label>帧率</label>
+        <div class="opt-row" id="expFps">
+          <button type="button" data-v="30" class="on">30 fps</button>
+          <button type="button" data-v="60">60 fps</button>
+        </div>
+      </div>
+      <div class="exp-summary">
+        <div><span>时长</span><b id="expDur">12.0 s</b></div>
+        <div><span>输出尺寸</span><b id="expSize">1920 × 1080</b></div>
+        <div><span>格式</span><b id="expFmt">WebM</b></div>
+      </div>
+      <div class="exp-warn" id="expWarn">
+        导出为逐帧离线渲染，不需要实时播放，可以放到后台。预计耗时约 <b id="expWait">8</b> 秒。
+      </div>
+      <button class="btn primary" id="btnStartExport" type="button">开始导出</button>
+    </div>
+
+    <div class="modal-body" id="exportRun" hidden>
+      <div class="run-wrap">
+        <div class="run-ring">
+          <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="ring-bg"/><circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg"/></svg>
+          <div class="run-pct" id="runPct">0%</div>
+        </div>
+        <div class="run-info">
+          <b id="runTitle">正在渲染…</b>
+          <span id="runSub">0.0 / 12.0 s</span>
+        </div>
+      </div>
+      <div class="run-bar"><i id="runBar"></i></div>
+      <button class="btn ghost full" id="btnCancelExport" type="button">取消导出</button>
+    </div>
+
+    <div class="modal-body" id="exportDone" hidden>
+      <video class="exp-video" id="expVideo" controls playsinline></video>
+      <div class="done-meta"><span id="doneInfo">—</span></div>
+      <div class="done-actions">
+        <a class="btn primary lg" id="btnDownload" download>下载视频</a>
+        <button class="btn ghost lg" id="btnExportAgain" type="button">重新导出</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="fatal" id="fatal" hidden><div><b>页面出错了</b><pre id="fatalMsg"></pre></div></div>
+
+<input type="file" id="fileInput" accept="application/pdf,.pdf" hidden />
+
+<script src="vendor/pdfjs/build/pdf.worker.js"></script>
+<script src="vendor/pdfjs/build/pdf.js"></script>
+<script src="js/core.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/pdfdoc.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/webm.js"></script>
+<script src="js/export.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

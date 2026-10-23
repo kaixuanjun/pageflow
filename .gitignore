@@ -1,0 +1,21 @@
+# 探针截图 / 录屏，不进仓库
+shots/
+*.mp4
+*.webm
+
+# 本地调试用的 Edge 配置
+.cdp-profile/
+.cdp-*/
+
+# 用户自己的 PDF（只在本机测试，别提交）
+*.pdf
+!assets/demo.pdf
+
+# 生成的测试文件
+assets/big.pdf
+assets/tiny.pdf
+tools/t-upload.gen.js
+
+node_modules/
+.DS_Store
+Thumbs.db
