@@ -182,14 +182,14 @@
        所以自由边会落后、会有卷边。明暗按**顶点**算（相邻两面片法线取平均），
        面片之间才不会出现一条条明暗台阶。 */
     function drawSheet(sh, img, op) {
-      var ang = sh.angles, N = ang.length;
+      var ang = sh.angles, N = ang.length, base = sh.base || 0;
       var L = sh.w / N, hh = sh.h / 2, hy = sh.hy;
       var xs = new Array(N + 1), zs = new Array(N + 1);
       var x = sh.hx, z = sh.hz;
       xs[0] = x; zs[0] = z;
       for (var k = 0; k < N; k++) {
-        x += Math.cos(ang[k]) * L;
-        z += Math.sin(ang[k]) * L;
+        x += Math.cos(ang[k] + base) * L;
+        z += Math.sin(ang[k] + base) * L;
         xs[k + 1] = x; zs[k + 1] = z;
       }
 
@@ -197,12 +197,13 @@
       var LX = -0.40, LY = -0.50, LZ = 0.76;
       var nodeShade = new Array(N + 1);
       for (k = 0; k <= N; k++) {
-        var a0 = ang[k > 0 ? k - 1 : 0];
-        var a1 = ang[k < N ? k : N - 1];
+        var a0 = ang[k > 0 ? k - 1 : 0] + base;
+        var a1 = ang[k < N ? k : N - 1] + base;
         var am = (a0 + a1) * 0.5;
         var nx = -Math.sin(am), nz = Math.cos(am);       /* 纸面朝观者那一侧的法线 */
         var dot = nx * LX + nz * LZ;                     /* 法线不含 y 分量，LY 不参与 */
-        nodeShade[k] = 0.78 + 0.40 * (dot > 0 ? dot : 0);
+        var sd = 1 + (0.40 / LZ) * ((dot > 0 ? dot : 0) - LZ);
+        nodeShade[k] = sd < 0.55 ? 0.55 : (sd > 1.28 ? 1.28 : sd);
       }
 
       var minX = xs[0], maxX = xs[0];
@@ -213,7 +214,7 @@
          段与段之间留 1 像素重叠，接缝处的 alpha 只叠一次（不叠出亮线）。 */
       var zSh = sh.hz - 5;
       var lift = sh.lift || 0;
-      var shA = Math.min(0.55, 0.20 + 0.42 * lift) * op;
+      var shA = Math.min(0.40, 0.55 * lift * lift) * op;
       painter.depthWrite(false);
       if (shA > 0.004) {
         var padY = hh * 0.06 + 3;
@@ -258,12 +259,6 @@
         var gx = gb[0] + pp.x, gy = gb[1] + pp.y, gz = gb[2] + pp.z;
         var gimg = getPage ? getPage(ii) : null;
 
-        /* 正在翻的那一张走曲面路径（物理弯页 + 法线明暗 + 投影阴影） */
-        if (pp.sheet && gimg && gimg.width && gimg.height) {
-          drawSheet(pp.sheet, gimg, op);
-          continue;
-        }
-
         var Q = function (u, v) {
           return projH(gx + u * gex[0] + v * gey[0],
                        gy + u * gex[1] + v * gey[1],
@@ -275,8 +270,10 @@
         if (op > 0.02) {
           var pd = SHADOW_PAD;
           painter.depthWrite(false);
+          /* 快退场的页（op 很低）不画阴影：它的影子叠在深色背景上会变成一块脏灰 */
           painter.quad(shadow,
-            [Q(-pd, -pd), Q(1 + pd, -pd), Q(1 + pd, 1 + pd), Q(-pd, 1 + pd)], op * 0.62);
+            [Q(-pd, -pd), Q(1 + pd, -pd), Q(1 + pd, 1 + pd), Q(-pd, 1 + pd)],
+            op * 0.62 * C.smoothstep(0.12, 0.55, op));
           painter.depthWrite(true);
         }
 
@@ -286,6 +283,24 @@
           painter.depthWrite(false);
           painter.quad(null,
             [Q(-eps, -eps), Q(1 + eps, -eps), Q(1 + eps, 1 + eps), Q(-eps, 1 + eps)], 0.15 * op);
+          /* 正在翻的那一张：页身改走曲面路径（物理弯页 + 法线明暗 + 额外投影阴影）。
+             阴影和描边刚刚已经按同一套刚体页的做法画过了 —— 这样翻页进度走到 0/1 时，
+             曲面路径和"翻完之后静止的刚体页"在几何、明暗、阴影上逐像素吻合。 */
+          if (pp.sheet && pp.sheet.angles && pp.sheet.angles.length) {
+            var su = C.clamp(pp.sheet.u == null ? 0 : pp.sheet.u, 0, 1);
+            /* 纸已经平摊到左页位时（u→1），曲面是把页面绕到 180°+ 才躺下去的，
+               贴图是背面（镜像的）；而"翻完之后静止的刚体页"是正面。两者几何完全重合，
+               所以在重合的这一段把刚体页淡入、曲面淡出 —— 交接处不会闪、也不会翻面。 */
+            var fadeIn = C.smoothstep(0.995, 0.9995, su);
+            if (fadeIn > 0.002) {
+              painter.depthWrite(op * fadeIn >= 0.99);
+              painter.quad(gimg, [Q(0, 0), Q(1, 0), Q(1, 1), Q(0, 1)], op * fadeIn);
+              painter.depthWrite(true);
+            }
+            if (fadeIn < 0.998) drawSheet(pp.sheet, gimg, op * (1 - fadeIn));
+            painter.depthWrite(true);
+            continue;
+          }
           /* 半透明的页只参与混合、不写深度，免得把更远处的页判死 */
           painter.depthWrite(op >= 0.99);
           painter.quad(gimg, [Q(0, 0), Q(1, 0), Q(1, 1), Q(0, 1)], op);

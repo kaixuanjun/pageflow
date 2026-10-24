@@ -238,20 +238,26 @@
     }
 
     var tg = PF.core.targets(kfs, t, ctx);
-    var book = !!(tg.from && tg.from.layout === 'book' && tg.to && tg.to.layout === 'book');
-    var ti = book ? turnIndex(tg.focus) : -1;
 
-    /* 翻页那张：用**模拟出来的**进度驱动弯曲链（有惯性，会自己加速扑下去） */
-    if (book && ti >= 0 && ti < n && PF.Sheet) {
-      var tp = tg.poses[ti] && tg.poses[ti].turn;
-      if (tp) {
-        var u = clamp(poses[ti].u, 0, 1);
-        poses[ti].sheet = {
-          hx: tp.hx, hy: tp.hy, hz: tp.hz, w: tp.w, h: tp.h,
-          angles: PF.Sheet.anglesFor('turn', u),
-          lift: Math.abs(Math.sin(Math.PI * u))
+    /* 弯纸（js/sheet.js）已经停用：书本不再做独一份的拟真翻页，所有布局统一用刚体页。
+       代码保留在 sheet.js / engine.js 的 drawSheet 里，PF.core.sheet = true 可重新打开。 */
+    if (PF.core && PF.core.sheet === true) {
+      for (i = 0; i < n; i++) {
+        var g0 = tg.poses[i];
+        if (!g0 || !g0.turnGeom || !PF.Sheet) continue;
+        var u0 = clamp(poses[i].u == null ? 0 : poses[i].u, 0, 1);
+        if (u0 <= 0.002 || u0 >= 0.998) continue;
+        var g1 = g0.turnGeom;
+        poses[i].sheet = {
+          hx: g1.hx, hy: g1.hy, hz: g1.hz, w: g1.w, h: g1.h,
+          angles: PF.Sheet.anglesFor('turn', u0),
+          u: u0,
+          base: -g1.tilt + 2 * g1.tilt * u0,
+          lift: Math.sin(Math.PI * u0)
         };
-        poses[ti].z = 120 * Math.sin(Math.PI * u);
+        poses[i].x = g1.hx + g1.w / 2 - u0 * g1.w;
+        poses[i].ry = -g1.tilt + 2 * g1.tilt * u0;
+        poses[i].z = -6 * u0 + 120 * Math.sin(Math.PI * u0);
       }
     }
 

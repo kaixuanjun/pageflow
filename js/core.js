@@ -145,7 +145,8 @@
        露着半个身子沉到牌堆下面 —— 抽牌动作是看得见的，不是原地换个高亮。 */
     stack: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
-      var sp = 17 * o.p1;
+      var bo = clamp(o.boost || 0, 0, 1);
+      var sp = 17 * o.p1 * (1 + 0.85 * bo);
       var span = Math.min(sp * (n - 1), 360);
       var step = n > 1 ? span / (n - 1) : 0;
       var jit = 2.5 * o.p2 * DEG;
@@ -171,7 +172,8 @@
     tile: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
       var V = o.V, page = o.page;
-      var gap = 20 * o.p1;
+      var bo = clamp(o.boost || 0, 0, 1);
+      var gap = 20 * o.p1 * (1 + 1.1 * bo);
       var ar = page.w / page.h;
       var cols = clamp(Math.ceil(Math.sqrt(n * (V.w / V.h) / ar)), 1, n);
       var rows = Math.ceil(n / cols);
@@ -207,51 +209,50 @@
          起来，已经翻过去的页会一张平一张斜，看着像错位。 */
       var flat = clamp(o.flat || 0, 0, 1);
       var tilt = 8.5 * o.p2 * DEG * (1 - flat);
-      /* 快到最后一页时右页位会空出来：smoothly 把整体宽度收回去，避免翻页途中尺寸突变 */
+      /* 快到最后一页时右页位会空出来：平滑把整体宽度收回去，避免翻页途中尺寸突变 */
       var two = clamp(n - 1 - fc, 0, 1);
       var fit = Math.min(1, (V.w * 0.90) / (page.w * (1 + two) + 12 * o.p1));
       var pw = page.w * fit;
-      var gapx = 6 * o.p1 * fit;
-      var halfW = pw / 2 + gapx;
-      var step = 2 * halfW;
-      /* 最后一页没有右页 → 整本书往右挪回来，单页依然居中 */
-      var shift = halfW * (1 - two);
+      var gapx = 6 * o.p1 * fit * (1 + 1.4 * clamp(o.boost || 0, 0, 1));
+      var step = pw + 2 * gapx;
+      /* 书脊在 x = shift。左右页位分别是 ±pw/2 —— 这个选择是刻意的：
+         物理弯纸的铰链也正好在 shift、平摊时正好铺满 [shift, shift+pw]（右页位）
+         或 [shift-pw, shift]（左页位），于是翻页进度走到 0 或 1 时，
+         弯纸的姿态和"翻完之后静止的刚体"逐像素吻合，切换时不会闪一下。 */
+      var shift = (pw / 2) * (1 - two);
       var out = [];
       for (var i = 0; i < n; i++) {
         var q = i - fc;                 /* 0 = 左页，1 = 右页，连续 */
         var p = emptyPose();
         p.scale = fit;
+        p.turnGeom = { hx: shift, hy: 0, hz: 0, w: pw, h: page.h * fit, tilt: tilt };
         if (q >= 1) {
-          /* 右边还没翻到的页：在右页位后面排队 */
+          /* 右边还没翻到的页：在右页位后面排队，退到聚焦页之后（-10 起） */
           var ahead = Math.min(q - 1, 3);
-          p.x = shift + halfW + (q - 1) * step;
+          p.x = shift + pw / 2 + gapx + (q - 1) * step;
           p.ry = -(tilt + ahead * 7 * DEG);
-          p.z = -ahead * 170;
+          p.z = -10 - ahead * 170;
           p.opacity = clamp(1 - Math.max(0, ahead - 1) * 0.55, 0, 1);
         } else if (q > 0) {
-          /* 正在翻的这一张：抬起来、绕过书脊，两端用 sin 平滑接上。
-             真正的形状（弯曲、卷边、投影）交给 js/sheet.js 的物理链在引擎里画；
-             这里给出铰链位置和尺寸，并保留一份刚体姿态当 2D 兜底 / 形变时用。 */
-          var sw = Math.sin((1 - q) * Math.PI);
-          p.x = shift - halfW + q * step;
-          p.ry = -tilt + 2 * tilt * (1 - q) + 62 * DEG * sw * (1 - flat);
-          p.z = 120 * sw * (1 - 0.6 * flat);
+          /* 正在翻的这一张：页心从右页位线性走到左页位，倾角从 -tilt 过到 +tilt，
+             中途抬起(z 拱起来)并甩一下。两端分别对上"还没翻"(z=-10、-tilt)
+             与"翻完压在左页位"(z=0、+tilt)，所以不会在交接处跳。 */
+          /* q=1 在右页位、q=0 在左页位 —— 所以是 shift-pw/2 + q*pw（这个方向写反过一次，
+             结果翻页那张从左边往右边走，落点和静止位全对不上） */
+          p.x = shift - pw / 2 + q * pw;
+          /* 倾角：右页位 -tilt → 中途几乎侧对观者（这才是"翻过去"）→ 左页位 +tilt */
+          p.ry = tilt * (1 - 2 * q) - 70 * DEG * Math.sin(Math.PI * q);
+          p.z = 130 * Math.sin(Math.PI * q);
           p.opacity = 1;
-          p.turn = { q: q, hx: shift + gapx, hy: 0, hz: 0, w: pw, h: page.h * fit };
-        } else if (q > -1) {
-          /* 刚翻过去的那一张：原地压在左页位上，等下一张落下来才让位 */
-          p.x = shift - halfW;
-          p.ry = tilt;
-          p.z = -6;
-          p.opacity = 1;
+          p.turn = { q: q, hx: shift, hy: 0, hz: 0, w: pw, h: page.h * fit };
         } else {
-          /* 再往左是已经翻过去的一叠。往左退的距离要收着（最多约 1.2 个页宽），
-             否则切到别的布局时这些页要横跨大半个画面重新排位，看起来像错位。 */
-          var back = Math.min(-q - 1, 1.2);
-          p.x = shift - halfW + (q + 1) * step * 0.55;
+          /* 已经翻到左边的一叠：聚焦页那一张（q=0）正好在左页位、z 最高，
+             再往前翻过的依次往左退、往后退、并淡出。 */
+          var back = Math.min(-q, 1.2);
+          p.x = shift - pw / 2 - back * step * 0.55;
           p.ry = tilt + back * 7 * DEG;
-          p.z = -6 - back * 190;
-          p.opacity = clamp(1 - back * 0.7, 0, 1);
+          p.z = back <= 0 ? 0 : -8 - back * 190;
+          p.opacity = back <= 0 ? 1 : clamp(1 - back * 0.85, 0, 1);
         }
         out.push(p);
       }
@@ -262,8 +263,11 @@
        被抽出来、朝观者抬起；换页时上一张落回扇面、下一张抽出来，动作是连续的。 */
     fan: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
-      var stepA = 4.6 * o.p1 * DEG;
-      var R = 1120 * o.p2;
+      /* 过渡中段把弧度和半径一起放大：扇面张开、纸与纸之间露出缝，
+         要上来的那一页就能从缝里抬到最前面，而不必整块换手（关键帧处仍是用户设的值）。 */
+      var bo = clamp(o.boost || 0, 0, 1);
+      var stepA = 4.6 * o.p1 * (1 + 0.85 * bo) * DEG;
+      var R = 1120 * o.p2 * (1 + 0.45 * bo);
       var out = [];
       for (var i = 0; i < n; i++) {
         var d = clamp(i - fc, -11, 11);
@@ -285,10 +289,11 @@
     /* 环形：3D 转盘（focus 连续 → 转盘连续旋转） */
     carousel: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
+      var bo = clamp(o.boost || 0, 0, 1);
       var stepA = (360 / Math.max(n, 8)) * o.p2 * DEG;
       /* 由"相邻页弦距 ≈ 0.58 页宽"反解半径，保证真的看得到一圈 */
       var chord = o.page.w * 0.58;
-      var R = clamp(chord / (2 * Math.sin(clamp(stepA, 0.02, Math.PI * 0.92) / 2)) * o.p1, 240, 2600);
+      var R = clamp(chord / (2 * Math.sin(clamp(stepA, 0.02, Math.PI * 0.92) / 2)) * o.p1 * (1 + 0.45 * bo), 240, 3200);
       var out = [];
       for (var i = 0; i < n; i++) {
         var d = ((i - fc) % n + n) % n;
@@ -307,7 +312,8 @@
     /* 画廊：封面流（focus 连续 → 整排封面连续掠过） */
     coverflow: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
-      var sp = 196 * o.p1;
+      var bo = clamp(o.boost || 0, 0, 1);
+      var sp = 196 * o.p1 * (1 + 0.50 * bo);
       var maxT = 62 * o.p2;
       var out = [];
       for (var i = 0; i < n; i++) {
@@ -325,7 +331,8 @@
     /* 纵深：隧道式后退（focus 连续 → 连续倒退） */
     depth: function (o) {
       var n = o.n, fc = clamp(o.focus, 0, n - 1);
-      var zStep = 132 * o.p1;
+      var bo = clamp(o.boost || 0, 0, 1);
+      var zStep = 132 * o.p1 * (1 + 0.6 * bo);
       var out = [];
       for (var i = 0; i < n; i++) {
         var d = i - fc;
@@ -335,7 +342,8 @@
           p.z = -d * zStep;
           p.opacity = clamp(1 - d * 0.085, 0, 1);
         } else {
-          p.z = -d * 330;
+          /* 已经翻过去的页往后走（负 z），只做淡出，不压到聚焦页前面 */
+          p.z = d * 330;
           p.opacity = clamp(1 + d * 0.62, 0, 1);
         }
         out.push(p);
@@ -390,35 +398,21 @@
     /* 聚焦页也跟着缓动连续推进：大跨度跳页时中间每张都会经过一遍，
        而不是"两端都不在画面里"直接硬切过去 */
     var fNow = lerp(a.focus, b.focus, e);
-    var base = { n: n, p1: p1, p2: p2, V: ctx.V, page: ctx.page, focus: fNow };
+    /* 让位量：两端为 0（关键帧画面不变），过渡中段为 1。各布局拿它把间距临时撑开，
+       让要上来的那一页从缝里穿过去，而不是整块盖住别人。 */
+    var boost = Math.sin(Math.PI * e);
+    var base = { n: n, p1: p1, p2: p2, V: ctx.V, page: ctx.page, focus: fNow, boost: boost };
 
     var poses;
     if (a.layout === b.layout) {
       /* 同一个布局：直接在连续 focus 上采样，位移/翻页都是真连续 */
       poses = layoutPoses(a.layout, base);
 
-      /* 书本的翻页这一张交给物理链：按自己的进度 u 查预积分的角度剖面。
-         key 用「两个关键帧 + 页号」，同一段过渡里恒定 → 结果决定性、可重复渲染。 */
-      if (a.layout === 'book' && PF.Sheet) {
-        for (var si = 0; si < poses.length; si++) {
-          var tp = poses[si].turn;
-          if (!tp) continue;
-          var u = clamp(1 - tp.q, 0, 1);
-          var ang = PF.Sheet.anglesFor(a.id + '>' + b.id + '#' + si, u);
-          poses[si].sheet = {
-            hx: tp.hx, hy: tp.hy, hz: tp.hz, w: tp.w, h: tp.h,
-            angles: ang,
-            lift: Math.abs(Math.sin(Math.PI * u))
-          };
-          /* 排序用的 z：翻到侧面时鼓向观者（和纸面最高点一致） */
-          poses[si].z = 120 * Math.sin(Math.PI * u);
-        }
-      }
     } else {
       /* 换布局：两端各采样一次再形变混合，端点值保持精确。
          中段把「书页朝观者翘起/翻页摆动」这类布局自带的姿态收敛掉（flat 两端为 0，
          所以关键帧本身还是原样），免得和目标布局的倾斜互相打架、已经翻过的页错位。 */
-      var flatBase = { n: n, p1: p1, p2: p2, V: ctx.V, page: ctx.page, focus: fNow, flat: Math.sin(Math.PI * e) };
+      var flatBase = { n: n, p1: p1, p2: p2, V: ctx.V, page: ctx.page, focus: fNow, boost: Math.sin(Math.PI * e), flat: Math.sin(Math.PI * e) };
       var pa = layoutPoses(a.layout, flatBase);
       var pb = layoutPoses(b.layout, flatBase);
       poses = new Array(n);
